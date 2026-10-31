@@ -14,7 +14,7 @@ import { streamJsonlLines } from "./jsonlStream";
 
 // Bump whenever parsing or diagnostic semantics change so stale caches (and
 // their persisted warnings) invalidate automatically on upgrade.
-export const jsonUsageParserVersion = "local-json-v6-grok";
+export const jsonUsageParserVersion = "local-json-v7-codex-zstd";
 const maxDirectoryDepth = 6;
 const maxFilesPerSource = 10_000;
 const directoryReadConcurrency = 8;

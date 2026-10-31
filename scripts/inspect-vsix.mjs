@@ -45,6 +45,8 @@ const requiredGroups = [
   ["extension/LICENSE", "extension/LICENSE.md", "extension/LICENSE.txt", "extension/license", "extension/license.md", "extension/license.txt"],
   ["extension/CHANGELOG.md", "extension/changelog.md"],
   ["extension/out/src/extension.js"],
+  ["extension/out/src/adapters/zstdStream.js"],
+  ["extension/THIRD_PARTY_NOTICES.txt"],
   ["extension/media/main.js"],
   ["extension/media/main.css"],
   ["extension/media/sqljs/sql-wasm.js"],

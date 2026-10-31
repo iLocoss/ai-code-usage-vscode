@@ -1,7 +1,8 @@
 import path from "node:path";
+import { promises as fs } from "node:fs";
 import type { AdapterImportResult, ImportIssue, SourceKind, SourceMeta, TokenBreakdown, UsageProvider, UsageRecord } from "../domain/types";
 import { JsonUsageAdapter, jsonUsageParserVersion } from "./JsonUsageAdapter";
-import type { UsageFileParseOutcome } from "./JsonUsageAdapter";
+import type { UsageFileParseOutcome, UsageFileListResult } from "./JsonUsageAdapter";
 import { streamJsonlLines, tailMatches } from "./jsonlStream";
 
 const modelContextPaths = ["model", "message.model", "response.model", "payload.model", "payload.collaboration_mode.settings.model"];
@@ -11,6 +12,10 @@ type CodexFileContext = {
   currentModel?: string;
   models: Set<string>;
   lastTotalUsage?: CodexTokenCounts;
+  recentSnapshots?: Record<string, string>;
+  previousSnapshot?: string;
+  currentTurnId?: string;
+  sawRequestUsage?: boolean;
 };
 
 /**
@@ -30,11 +35,16 @@ export type CodexParseState = {
     currentModel?: string;
     models: string[];
     lastTotalUsage?: CodexTokenCounts;
+    recentSnapshots?: Record<string, string>;
+    previousSnapshot?: string;
+    currentTurnId?: string;
   };
 };
 
 type PendingCodexRecord = Omit<UsageRecord, "model"> & {
   model?: string;
+  mirrorKey?: string;
+  requestUsage?: boolean;
 };
 
 type CodexTokenCounts = {
@@ -45,6 +55,57 @@ type CodexTokenCounts = {
 
 export class CodexUsageAdapter extends JsonUsageAdapter {
   public readonly provider = "codex" as const;
+
+  /** Include the standard sibling archive while keeping custom paths scoped. */
+  public override async listUsageFiles(options?: { usagePath?: string }): Promise<UsageFileListResult> {
+    const result = await super.listUsageFiles(options);
+    const sourcePath = result.sourcePath;
+    if (sourcePath && path.basename(path.resolve(sourcePath)).toLowerCase() === "sessions") {
+      const archivePath = path.join(path.dirname(path.resolve(sourcePath)), "archived_sessions");
+      try {
+        const stat = await fs.lstat(archivePath);
+        if (stat.isDirectory() && !stat.isSymbolicLink()) {
+          const archive = await super.listUsageFiles({ usagePath: archivePath });
+          result.files.push(...archive.files);
+          result.errors.push(...archive.errors);
+          result.warnings.push(...archive.warnings.filter((warning) => warning.code !== "empty_directory"));
+          result.sourceMeta.push(...archive.sourceMeta);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          result.errors.push(issue("error", "directory_unreadable", errorMessage(error), archivePath, this.provider));
+        }
+      }
+    }
+    // A rollout can exist in both folders or as both compressed and plain
+    // copies. Prefer the active folder, then its plain copy, once per session.
+    const unique = new Map<string, UsageFileListResult["files"][number]>();
+    for (const file of result.files) {
+      const name = path.basename(file.filePath).replace(/\.zst$/i, "");
+      const sessionId = /^rollout-.*-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$/i.exec(name)?.[1];
+      const key = sessionId?.toLowerCase() ?? path.resolve(file.filePath).replace(/\.zst$/i, "");
+      const previous = unique.get(key);
+      const previousIsActive = previous && sourcePath && isWithin(sourcePath, previous.filePath);
+      const fileIsActive = sourcePath && isWithin(sourcePath, file.filePath);
+      if (!previous || (!previousIsActive && fileIsActive) ||
+          (previousIsActive === fileIsActive && previous.filePath.endsWith(".zst") && !file.filePath.endsWith(".zst"))) {
+        unique.set(key, file);
+      }
+    }
+    result.files = [...unique.values()];
+    if (result.files.length > 10_000) {
+      result.files = result.files.slice(0, 10_000);
+      result.warnings.push(issue("warning", "source_file_limit", "Only the first 10000 Codex usage files were imported.", sourcePath, this.provider));
+    }
+    if (result.files.length > 0) {
+      result.warnings = result.warnings.filter((warning) => warning.code !== "empty_directory");
+    }
+    return result;
+  }
+
+  protected override isUsageFile(name: string): boolean {
+    return /\.jsonl\.zst$/i.test(name) || super.isUsageFile(name);
+  }
 
   protected override async readFile(filePath: string, result: AdapterImportResult, readAt: string): Promise<void> {
     if (sourceKind(filePath) !== "jsonl") {
@@ -59,6 +120,10 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
       return { result: await this.importUsageFile(filePath, readAt) };
     }
 
+    if (filePath.toLowerCase().endsWith(".jsonl.zst")) {
+      // Compressed byte positions cannot resume decompressed line offsets.
+      return { result: await this.importUsageFile(filePath, readAt) };
+    }
     const resume = validateCodexParseState(prior);
     if (resume && resume.allowIncremental && (await tailMatches(filePath, resume.parsedBytes, resume.tailHash))) {
       const appendedResult = this.emptyResult();
@@ -100,9 +165,12 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
           currentModel: resume.context.currentModel,
           models: new Set(resume.context.models),
           lastTotalUsage: resume.context.lastTotalUsage ? { ...resume.context.lastTotalUsage } : undefined,
+          recentSnapshots: { ...resume.context.recentSnapshots },
+          previousSnapshot: resume.context.previousSnapshot,
+          currentTurnId: resume.context.currentTurnId,
         }
       : {
-          sessionId: path.basename(filePath, path.extname(filePath)),
+          sessionId: path.basename(filePath.replace(/\.zst$/i, ""), ".jsonl"),
           models: new Set(),
         };
     const records: PendingCodexRecord[] = [];
@@ -119,10 +187,18 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
 
     let stream;
     try {
+      const before = /\.jsonl\.zst$/i.test(filePath) ? await fs.stat(filePath) : undefined;
       stream = await streamJsonlLines(filePath, handleLine, {
         start: resume?.parsedBytes ?? 0,
         lineNumberBase: resume?.lineCount ?? 0,
       });
+      if (before) {
+        const after = await fs.stat(filePath);
+        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
+          result.warnings.push(issue("warning", "file_transient", "Compressed session changed while reading; skipped for this refresh.", filePath, this.provider));
+          return undefined;
+        }
+      }
     } catch (error) {
       result.errors.push(issue("error", "file_unreadable", errorMessage(error), filePath, this.provider));
       return undefined;
@@ -150,7 +226,7 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
       };
     }
 
-    if (resume && !modelsUnchanged(resume.context.models, context.models)) {
+    if (resume && (context.sawRequestUsage || !modelsUnchanged(resume.context.models, context.models))) {
       // Any change to the model set (including 0 -> 1) alters the model
       // backfill applied to records parsed earlier, so the whole file must be
       // reparsed for those records to come out right.
@@ -158,8 +234,25 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
     }
 
     const inferredModel = context.models.size === 1 ? [...context.models][0] : undefined;
+    // Newer rollouts may append request usage alongside the legacy token-count
+    // events. Match one mirror per turn and token tuple, preserving unmatched
+    // request-only records and repeated equal-sized requests.
+    const legacyMirrors = new Map<string, number>();
+    for (const record of records) {
+      if (record.mirrorKey && !record.requestUsage) {
+        legacyMirrors.set(record.mirrorKey, (legacyMirrors.get(record.mirrorKey) ?? 0) + 1);
+      }
+    }
+    const distinctRecords = records.filter((record) => {
+      const copies = record.requestUsage && record.mirrorKey ? legacyMirrors.get(record.mirrorKey) ?? 0 : 0;
+      if (copies > 0) {
+        legacyMirrors.set(record.mirrorKey!, copies - 1);
+        return false;
+      }
+      return true;
+    });
     result.records.push(
-      ...records.map((record) => ({
+      ...distinctRecords.map(({ mirrorKey, requestUsage, ...record }) => ({
         ...record,
         model: record.model ?? inferredModel,
         sessionId: record.sessionId ?? context.sessionId,
@@ -170,7 +263,7 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
       parsedBytes: stream.parsedBytes,
       tailHash: stream.tailHash,
       lineCount: (resume?.lineCount ?? 0) + stream.lineCount,
-      allowIncremental: !processedPartialTail,
+      allowIncremental: !processedPartialTail && !context.sawRequestUsage,
       context: serializeCodexContext(context),
     };
   }
@@ -192,6 +285,10 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
 
     this.updateContext(object, context);
     const payload = asObject(object["payload"]);
+    const requestUsage = object["type"] === "token_usage_record";
+    if (requestUsage) {
+      context.sawRequestUsage = true;
+    }
     const usage = this.usageForRecord(object, payload, context);
     if (object["type"] === "event_msg" && payload?.["type"] === "token_count" && !usage) {
       const info = payload["info"];
@@ -212,6 +309,11 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
     }
 
     records.push({
+      requestUsage,
+      mirrorKey: (requestUsage ? firstString(payload ?? {}, ["turn_id"]) : context.currentTurnId)
+        ? JSON.stringify([requestUsage ? firstString(payload ?? {}, ["turn_id"]) : context.currentTurnId,
+            usage.input, usage.cachedInput, usage.output])
+        : undefined,
       provider: this.provider,
       model: firstString(object, modelContextPaths) ?? context.currentModel,
       sessionId: firstString(object, ["sessionId", "session_id", "conversationId", "conversation_id", "uuid", "payload.id", "payload.session_id"]) ?? context.sessionId,
@@ -227,12 +329,28 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
   private usageForRecord(object: Record<string, unknown>, payload: Record<string, unknown> | undefined, context: CodexFileContext): CodexTokenCounts | undefined {
     if (object["type"] === "event_msg" && payload) {
       const totalUsage = countsFromCodexUsage(asObject(valueAt(payload, "info.total_token_usage")));
-      if (totalUsage) {
-        const delta = deltaCounts(totalUsage, context.lastTotalUsage);
-        context.lastTotalUsage = totalUsage;
-        return delta;
-      }
       const lastUsage = countsFromCodexUsage(asObject(valueAt(payload, "info.last_token_usage")));
+      if (totalUsage) {
+        const signature = JSON.stringify([totalUsage, lastUsage]);
+        const source = firstString(payload, ["rate_limits.limit_id", "info.rate_limits.limit_id"]) ?? "default";
+        const duplicate = context.previousSnapshot === signature || context.recentSnapshots?.[source] === signature;
+        context.recentSnapshots ??= {};
+        context.recentSnapshots[source] = signature;
+        context.previousSnapshot = signature;
+        const keys = Object.keys(context.recentSnapshots);
+        if (keys.length > 32) {
+          delete context.recentSnapshots[keys[0]!];
+        }
+        const delta = deltaCounts(totalUsage, context.lastTotalUsage);
+        context.lastTotalUsage = {
+          input: Math.max(totalUsage.input ?? 0, context.lastTotalUsage?.input ?? 0),
+          cachedInput: Math.max(totalUsage.cachedInput ?? 0, context.lastTotalUsage?.cachedInput ?? 0),
+          output: Math.max(totalUsage.output ?? 0, context.lastTotalUsage?.output ?? 0),
+        };
+        // Request-local counts avoid re-attributing inherited session totals.
+        // Repeated snapshots are status updates, not additional requests.
+        return duplicate ? { input: 0, cachedInput: 0, output: 0 } : lastUsage ?? delta;
+      }
       if (lastUsage) {
         return lastUsage;
       }
@@ -244,6 +362,9 @@ export class CodexUsageAdapter extends JsonUsageAdapter {
   }
 
   private updateContext(object: Record<string, unknown>, context: CodexFileContext): void {
+    if (object["type"] === "turn_context") {
+      context.currentTurnId = firstString(object, ["payload.turn_id"]);
+    }
     const model = firstString(object, modelContextPaths);
     if (model) {
       context.currentModel = model;
@@ -285,6 +406,9 @@ function serializeCodexContext(context: CodexFileContext): CodexParseState["cont
     currentModel: context.currentModel,
     models: [...context.models].sort(),
     lastTotalUsage: context.lastTotalUsage ? { ...context.lastTotalUsage } : undefined,
+    recentSnapshots: context.recentSnapshots ? { ...context.recentSnapshots } : undefined,
+    previousSnapshot: context.previousSnapshot,
+    currentTurnId: context.currentTurnId,
   };
 }
 
@@ -314,7 +438,13 @@ function validateCodexParseState(value: unknown): CodexParseState | undefined {
     (context.currentModel !== undefined && typeof context.currentModel !== "string") ||
     !Array.isArray(context.models) ||
     context.models.some((model) => typeof model !== "string") ||
-    !validOptionalCounts(context.lastTotalUsage)
+    !validOptionalCounts(context.lastTotalUsage) ||
+    (context.previousSnapshot !== undefined && typeof context.previousSnapshot !== "string") ||
+    (context.currentTurnId !== undefined && typeof context.currentTurnId !== "string") ||
+    (context.recentSnapshots !== undefined && (typeof context.recentSnapshots !== "object" ||
+      context.recentSnapshots === null || Array.isArray(context.recentSnapshots) ||
+      Object.keys(context.recentSnapshots).length > 32 ||
+      Object.values(context.recentSnapshots).some((value) => typeof value !== "string")))
   ) {
     return undefined;
   }
@@ -411,6 +541,9 @@ function hasNonZeroTokenUsage(tokens: TokenBreakdown): boolean {
 }
 
 function sourceKind(filePath: string): SourceKind {
+  if (/\.jsonl\.zst$/i.test(filePath)) {
+    return "jsonl";
+  }
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".jsonl") {
     return "jsonl";
@@ -488,4 +621,9 @@ function normalizeIso(value: string | undefined): string | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isWithin(directory: string, filePath: string): boolean {
+  const relative = path.relative(path.resolve(directory), path.resolve(filePath));
+  return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
 }

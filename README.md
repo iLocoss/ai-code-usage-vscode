@@ -20,6 +20,7 @@
 ## Features
 
 - Local usage discovery for Claude Code, Codex, pi agents, and Grok
+- Compressed Codex rollout support (`.jsonl.zst`) and automatic inclusion of the standard sibling `archived_sessions` directory
 - Provider filters for each provider or all combined
 - Calendar quick ranges for today, yesterday, this week, last week, this month, last month, and custom dates; week ranges start on Monday and all boundaries use the selected time zone
 - Time zone selection: system time zone, UTC, or custom IANA time zone
@@ -71,6 +72,18 @@ If these settings are empty, the extension detects common local paths and applie
 On native Windows VS Code, `~` resolves to the current Windows user home, such as `C:\Users\<user>\.claude\projects` and `C:\Users\<user>\.codex\sessions`.
 
 In Remote SSH or WSL windows, the extension runs in the remote extension host and reads the remote or WSL home directory. To inspect usage from the Windows host while working remotely, configure a path that is readable from that extension host.
+
+### Codex compressed and archived history
+
+Keep the Codex usage path set to `~/.codex/sessions`. When the configured directory is named `sessions`, the importer also reads its sibling `archived_sessions` directory if present. Other custom directories stay scoped to the configured path. Symbolic-link archive directories are not followed.
+
+Plain JSONL and Zstandard-compressed JSONL are read locally without extracting or changing the original files. If the same rollout ID exists in both folders, the active sessions folder takes precedence. Within that folder, a plain copy takes precedence over a compressed copy. The importer reads at most 10,000 selected files and reports an import warning if the limit is reached.
+
+Codex request-local usage is used when available, with cumulative counters as a fallback. Repeated status snapshots and matching legacy/request usage mirrors within a turn are counted once. Compressed files and files containing both representations are fully reparsed after changes; normal append-only JSONL files retain incremental import.
+
+The first run after this parser update rebuilds derived cache data for the selected date range. Use a custom range covering your history and **Rebuild cache** for a full rescan. Original conversation files are never deleted or modified. Totals can differ from other tools because of model attribution, lineage handling, date filters, and pricing policies.
+
+The Zstandard decoder is bundled during `npm run compile`; no external decompression program or runtime package installation is required. Its MIT notice is retained in `THIRD_PARTY_NOTICES.txt`.
 
 ## Cost Estimates
 

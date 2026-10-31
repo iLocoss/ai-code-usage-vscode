@@ -297,7 +297,7 @@ test("Codex adapter tolerates recoverable escaped rollout lines", async () => {
   }
 });
 
-test("Codex adapter imports cumulative token counts as deltas", async () => {
+test("Codex adapter imports cumulative token counts as deltas when request counts are absent", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "ai-code-usage-codex-total-delta-"));
   try {
     await writeFile(
@@ -309,11 +309,6 @@ test("Codex adapter imports cumulative token counts as deltas", async () => {
           payload: {
             type: "token_count",
             info: {
-              last_token_usage: {
-                input_tokens: 100,
-                cached_input_tokens: 40,
-                output_tokens: 10,
-              },
               total_token_usage: {
                 input_tokens: 100,
                 cached_input_tokens: 40,
@@ -328,11 +323,6 @@ test("Codex adapter imports cumulative token counts as deltas", async () => {
           payload: {
             type: "token_count",
             info: {
-              last_token_usage: {
-                input_tokens: 150,
-                cached_input_tokens: 60,
-                output_tokens: 15,
-              },
               total_token_usage: {
                 input_tokens: 150,
                 cached_input_tokens: 60,

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
+import { decompressZstdChunks } from "./zstdStream";
 
 export const tailWindowBytes = 4_096;
 
@@ -29,6 +30,10 @@ export async function streamJsonlLines(
   options: { start?: number; lineNumberBase?: number } = {},
 ): Promise<JsonlStreamResult> {
   const start = options.start ?? 0;
+  const compressed = filePath.toLowerCase().endsWith(".jsonl.zst");
+  if (compressed && start > 0) {
+    throw new Error("Compressed JSONL must be read from the beginning.");
+  }
   let lineNumber = options.lineNumberBase ?? 0;
   let parsedBytes = start;
   let sawContent = false;
@@ -44,27 +49,32 @@ export async function streamJsonlLines(
     }
   };
 
-  const stream = createReadStream(filePath, start > 0 ? { start } : {});
-  for await (const chunk of stream) {
-    pending = pending.length === 0 ? (chunk as Buffer) : Buffer.concat([pending, chunk as Buffer]);
-    let lineStart = 0;
-    let newlineIndex = pending.indexOf(10, lineStart);
-    while (newlineIndex !== -1) {
-      const lineBytes = pending.subarray(lineStart, newlineIndex);
-      const line = decodeLine(lineBytes);
-      lineNumber += 1;
-      if (line.trim()) {
-        sawContent = true;
+  const source = createReadStream(filePath, start > 0 ? { start } : {});
+  const stream = compressed ? decompressZstdChunks(source) : source;
+  try {
+    for await (const chunk of stream) {
+      pending = pending.length === 0 ? (chunk as Buffer) : Buffer.concat([pending, chunk as Buffer]);
+      let lineStart = 0;
+      let newlineIndex = pending.indexOf(10, lineStart);
+      while (newlineIndex !== -1) {
+        const lineBytes = pending.subarray(lineStart, newlineIndex);
+        const line = decodeLine(lineBytes);
+        lineNumber += 1;
+        if (line.trim()) {
+          sawContent = true;
+        }
+        onLine(line, lineNumber);
+        lineStart = newlineIndex + 1;
+        newlineIndex = pending.indexOf(10, lineStart);
       }
-      onLine(line, lineNumber);
-      lineStart = newlineIndex + 1;
-      newlineIndex = pending.indexOf(10, lineStart);
+      if (lineStart > 0) {
+        appendTailWindow(pending.subarray(0, lineStart));
+        parsedBytes += lineStart;
+        pending = Buffer.from(pending.subarray(lineStart));
+      }
     }
-    if (lineStart > 0) {
-      appendTailWindow(pending.subarray(0, lineStart));
-      parsedBytes += lineStart;
-      pending = Buffer.from(pending.subarray(lineStart));
-    }
+  } finally {
+    source.destroy();
   }
 
   let partialTail: string | undefined;
