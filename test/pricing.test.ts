@@ -7,6 +7,22 @@ import { test } from "node:test";
 import type { PricingCatalog, PricingRule, UsageRecord } from "../src/domain/types";
 import { PricingService, validatePricingMetadata } from "../src/services/PricingService";
 
+test("current catalog prices new GPT and Claude models with correct cache context thresholds", async () => {
+  const pricing = new PricingService(await srcCatalog());
+  for (const [model, expected] of [
+    ["gpt-6-sol", 1.22], ["gpt-6.1-sol", 1.21], ["gpt-6.1-terra", 0.605], ["gpt-6-luna", 0.061],
+  ] as const) {
+    const estimate = pricing.estimate(record("codex", model, { input: 100_000, cachedInput: 100_000, output: 100_000 }));
+    assert.equal(estimate.available, true, model);
+    if (estimate.available) assert.equal(estimate.cost.amount, expected, model);
+  }
+  for (const [input, expected] of [[0, 0.501], [1, 2.505001]] as const) {
+    const estimate = pricing.estimate(record("claude", "claude-haiku-5-5", { input, cacheRead: 100_000, output: 1_000_000 }));
+    assert.equal(estimate.available, true);
+    if (estimate.available) assert.equal(estimate.cost.amount, expected);
+  }
+});
+
 test("pricing calculates known Codex model with cached input", async () => {
   const pricing = new PricingService(await catalog());
   const estimate = pricing.estimate(record("codex", "gpt-5.5", { input: 1_000_000, cachedInput: 1_000_000, output: 1_000_000 }));

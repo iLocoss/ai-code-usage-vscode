@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-09-06T00:00:00.000Z",
+  "checkedAt": "2026-10-31T00:00:00.000Z",
   "sourceUrls": [
     "https://developers.openai.com/codex/pricing",
     "https://developers.openai.com/api/docs/pricing",
@@ -10,6 +10,175 @@
     "https://docs.x.ai/developers/models"
   ],
   "rules": [
+    {
+      "provider": "codex",
+      "model": "gpt-6-sol",
+      "modelAliases": [
+        "GPT-6 Sol"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 2,
+        "cachedInput": 0.2,
+        "output": 10
+      },
+      "longContext": {
+        "appliesAboveInputTokens": 272000,
+        "rates": {
+          "input": 4,
+          "cachedInput": 0.4,
+          "output": 15
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "modelAliases": [
+        "GPT-6.1 Sol"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 2,
+        "cachedInput": 0.1,
+        "output": 10
+      },
+      "longContext": {
+        "appliesAboveInputTokens": 272000,
+        "rates": {
+          "input": 4,
+          "cachedInput": 0.2,
+          "output": 15
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-6.1-terra",
+      "modelAliases": [
+        "GPT-6.1 Terra"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 1,
+        "cachedInput": 0.05,
+        "output": 5
+      },
+      "longContext": {
+        "appliesAboveInputTokens": 272000,
+        "rates": {
+          "input": 2,
+          "cachedInput": 0.1,
+          "output": 7.5
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-6-luna",
+      "modelAliases": [
+        "GPT-6 Luna"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 0.1,
+        "cachedInput": 0.01,
+        "output": 0.5
+      },
+      "longContext": {
+        "appliesAboveInputTokens": 272000,
+        "rates": {
+          "input": 0.2,
+          "cachedInput": 0.02,
+          "output": 0.75
+        }
+      }
+    },
+    {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "modelAliases": [
+        "Claude Opus 5.5",
+        "claude-opus-5.5",
+        "claude-opus-5-5[1m]",
+        "claude-opus-5.5[1m]"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 4,
+        "output": 20,
+        "cacheWrite5m": 5,
+        "cacheWrite1h": 8,
+        "cacheRead": 0.2
+      }
+    },
+    {
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "modelAliases": [
+        "Claude Sonnet 5.5",
+        "claude-sonnet-5.5",
+        "claude-sonnet-5-5[1m]",
+        "claude-sonnet-5.5[1m]"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 2,
+        "output": 10,
+        "cacheWrite5m": 2.5,
+        "cacheWrite1h": 4,
+        "cacheRead": 0.1
+      }
+    },
+    {
+      "provider": "claude",
+      "model": "claude-haiku-5-5",
+      "modelAliases": [
+        "Claude Haiku 5.5",
+        "claude-haiku-5.5",
+        "claude-haiku-5-5[1m]",
+        "claude-haiku-5.5[1m]"
+      ],
+      "currency": "USD",
+      "priceUnit": "per_1m_tokens",
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "checkedAt": "2026-10-31T00:00:00.000Z",
+      "rates": {
+        "input": 0.1,
+        "output": 0.5,
+        "cacheWrite5m": 0.125,
+        "cacheWrite1h": 0.2,
+        "cacheRead": 0.01
+      },
+      "longContext": {
+        "appliesAboveInputTokens": 100000,
+        "rates": {
+          "input": 0.5,
+          "output": 2.5,
+          "cacheWrite5m": 0.625,
+          "cacheWrite1h": 1,
+          "cacheRead": 0.05
+        }
+      }
+    },
     {
       "provider": "codex",
       "model": "gpt-6-astra",

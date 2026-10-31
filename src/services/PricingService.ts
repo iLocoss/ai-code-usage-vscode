@@ -76,8 +76,11 @@ export class PricingService {
       tokens.cacheRead = (tokens.cacheRead ?? 0) + tokens.cachedInput;
       delete tokens.cachedInput;
     }
+    // Claude prompt length includes cache reads and cache-creation tokens.
+    const promptTokens = (tokens.input ?? 0) + (tokens.cachedInput ?? 0) +
+      (tokens.cacheRead ?? 0) + (tokens.cacheWrite5m ?? 0) + (tokens.cacheWrite1h ?? 0);
     const rates =
-      rule.longContext && (tokens.input ?? 0) + (tokens.cachedInput ?? 0) > rule.longContext.appliesAboveInputTokens
+      rule.longContext && promptTokens > rule.longContext.appliesAboveInputTokens
         ? rule.longContext.rates
         : rule.rates;
     const amount = Object.entries(tokens).reduce((total, [category, count]) => {
